@@ -1,0 +1,78 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract DecentralizedEbay {
+    enum AuctionState { Open, Closed }
+    
+    struct Item {
+        uint id;
+        address payable seller;
+        string name;
+        string description;
+        uint minPrice;
+        uint highestBid;
+        address payable highestBidder;
+        AuctionState state;
+    }
+
+    uint public itemCount;
+    mapping(uint => Item) public items;
+    mapping(address => uint) public pendingReturns;
+
+    event ItemListed(uint itemId, address seller, string name, string description, uint minPrice);
+    event BidPlaced(uint itemId, address bidder, uint amount);
+    event AuctionEnded(uint itemId, address winner, uint amount);
+
+    function listItem(string memory _name, string memory _description, uint _minPrice) public {
+        itemCount++;
+        items[itemCount] = Item({
+            id: itemCount,
+            seller: payable(msg.sender),
+            name: _name,
+            description: _description,
+            minPrice: _minPrice,
+            highestBid: 0,
+            highestBidder: payable(address(0)),
+            state: AuctionState.Open
+        });
+        emit ItemListed(itemCount, msg.sender, _name, _description, _minPrice);
+    }
+
+    function placeBid(uint _itemId) public payable {
+        Item storage item = items[_itemId];
+        require(item.state == AuctionState.Open, "Auction is closed");
+        require(msg.value > item.minPrice, "Bid is below minimum price");
+        require(msg.value > item.highestBid, "There already is a higher bid");
+
+        if (item.highestBid != 0) {
+            pendingReturns[item.highestBidder] += item.highestBid;
+        }
+        item.highestBid = msg.value;
+        item.highestBidder = payable(msg.sender);
+        emit BidPlaced(_itemId, msg.sender, msg.value);
+    }
+
+    function withdraw() public {
+        uint amount = pendingReturns[msg.sender];
+        require(amount > 0, "No funds to withdraw");
+
+        pendingReturns[msg.sender] = 0;
+
+        if (!payable(msg.sender).send(amount)) {
+            pendingReturns[msg.sender] = amount;
+        }
+    }
+
+    function endAuction(uint _itemId) public {
+        Item storage item = items[_itemId];
+        require(msg.sender == item.seller, "Only seller can end the auction");
+        require(item.state == AuctionState.Open, "Auction is already closed");
+
+        item.state = AuctionState.Closed;
+
+        if (item.highestBidder != address(0)) {
+            item.seller.transfer(item.highestBid);
+            emit AuctionEnded(_itemId, item.highestBidder, item.highestBid);
+        }
+    }
+}
